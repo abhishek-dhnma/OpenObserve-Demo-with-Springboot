@@ -26,7 +26,7 @@ public class OrderService {
 
     private final ProductService productService;
     private final Tracer tracer;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
     private final Map<String, Order> orderRepository = new ConcurrentHashMap<>();
 
     private final String inventoryServiceUrl = "http://localhost:8081/api/inventory";
