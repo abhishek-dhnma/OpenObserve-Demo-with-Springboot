@@ -27,11 +27,14 @@ public class PaymentController {
         } catch (InterruptedException ignored) {}
 
         if (simulateFailure) {
-            String errorMsg = "PaymentGateway Authorization Failed: Card declined by issuing bank (Code 402)";
-            log.error("[payment-service] Payment authorization REJECTED for OrderID: {}! Insufficient funds or invalid CVV.", orderId);
-            Span.current().setStatus(StatusCode.ERROR, errorMsg);
+            RuntimeException ex = new RuntimeException("PaymentGatewayDeclinedException: Card authorization declined by issuing bank (Code 402)");
+            log.error("[payment-service] Payment authorization REJECTED for OrderID: {}! Insufficient funds or invalid CVV.", orderId, ex);
+            
+            Span.current().recordException(ex);
+            Span.current().setStatus(StatusCode.ERROR, ex.getMessage());
+            
             return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
-                    .body(Map.of("error", errorMsg, "code", "PAYMENT_DECLINED_402"));
+                    .body(Map.of("error", ex.getMessage(), "code", "PAYMENT_DECLINED_402"));
         }
 
         String txnRef = "TXN-" + UUID.randomUUID().toString().substring(0, 6).toUpperCase();

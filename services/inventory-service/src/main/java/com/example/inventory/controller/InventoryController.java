@@ -22,11 +22,14 @@ public class InventoryController {
         } catch (InterruptedException ignored) {}
 
         if (simulateFailure) {
-            String errorMsg = "InventoryService Exception: Stock allocation failed for OrderID " + orderId + ". DB Row lock timeout.";
-            log.error("[inventory-service] Stock allocation failed for OrderID: {}! Database lock timeout / Out of Stock.", orderId);
-            Span.current().setStatus(StatusCode.ERROR, errorMsg);
+            RuntimeException ex = new IllegalStateException("InventoryOutOfStockException: Stock allocation lock failed for OrderID " + orderId + ". DB Row lock timeout.");
+            log.error("[inventory-service] Stock allocation failed for OrderID: {}! Database lock timeout / Out of Stock.", orderId, ex);
+            
+            Span.current().recordException(ex);
+            Span.current().setStatus(StatusCode.ERROR, ex.getMessage());
+            
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", errorMsg, "code", "INVENTORY_ALLOCATION_FAILED_500"));
+                    .body(Map.of("error", ex.getMessage(), "code", "INVENTORY_ALLOCATION_FAILED_500"));
         }
 
         log.info("[inventory-service] Stock reserved successfully for OrderID: {}", orderId);

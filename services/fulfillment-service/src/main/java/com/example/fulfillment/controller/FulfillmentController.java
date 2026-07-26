@@ -26,11 +26,14 @@ public class FulfillmentController {
         } catch (InterruptedException ignored) {}
 
         if (simulateFailure) {
-            String errorMsg = "FulfillmentService Exception: Carrier API connection timeout (FedEx Service Unavailable 503)";
-            log.error("[fulfillment-service] Failed to create shipping label for OrderID: {}! Carrier API timed out.", orderId);
-            Span.current().setStatus(StatusCode.ERROR, errorMsg);
+            RuntimeException ex = new RuntimeException("CarrierServiceUnavailableException: FedEx Carrier API connection timeout (FedEx Service Unavailable 503)");
+            log.error("[fulfillment-service] Failed to create shipping label for OrderID: {}! Carrier API timed out.", orderId, ex);
+            
+            Span.current().recordException(ex);
+            Span.current().setStatus(StatusCode.ERROR, ex.getMessage());
+            
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .body(Map.of("error", errorMsg, "code", "CARRIER_API_TIMEOUT_503"));
+                    .body(Map.of("error", ex.getMessage(), "code", "CARRIER_API_TIMEOUT_503"));
         }
 
         String trackingId = "TRK-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();

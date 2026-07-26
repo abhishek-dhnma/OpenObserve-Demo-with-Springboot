@@ -1,6 +1,7 @@
 package com.example.amzstore.service;
 
 import com.example.amzstore.dto.CheckoutRequest;
+import com.example.amzstore.exception.DatabaseConnectionTimeoutException;
 import com.example.amzstore.model.CartItem;
 import com.example.amzstore.model.Order;
 import io.micrometer.tracing.ScopedSpan;
@@ -51,7 +52,7 @@ public class OrderService {
         boolean inventorySuccess = reserveInventoryStock(request.getItems(), orderId, "INVENTORY".equalsIgnoreCase(failureType));
         if (!inventorySuccess) {
             return createFailedOrder(orderId, customerEmail, request.getItems(), subtotal, mainTraceId,
-                    "InventoryService Error: Stock allocation failed / Database lock timeout (500)");
+                    "InventoryOutOfStockException: Stock allocation lock failed / DB Row lock timeout (500)");
         }
 
         // 4. PricingService
@@ -64,21 +65,25 @@ public class OrderService {
         boolean paymentSuccess = authorizePayment(orderId, finalAmount, "PAYMENT".equalsIgnoreCase(failureType) || request.isSimulateFailure());
         if (!paymentSuccess) {
             return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
-                    "PaymentGateway Error: Card authorization declined by issuing bank (Code 402)");
+                    "PaymentGatewayDeclinedException: Card authorization declined by issuing bank (Code 402)");
         }
 
         // 7. HTTP Call to standalone fulfillment-service (Port 8083)
         String trackingId = createShippingLabel(orderId, customerEmail, "SHIPPING".equalsIgnoreCase(failureType));
         if (trackingId == null) {
             return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
-                    "FulfillmentService Error: Carrier API address validation timeout (FedEx 503)");
+                    "CarrierServiceUnavailableException: Carrier API address validation timeout (FedEx 503)");
         }
 
         // 8. NotificationService
         sendOrderConfirmationEmail(customerEmail, orderId, finalAmount);
 
-        // 9. Database Persistence
-        commitOrderTransaction(orderId, finalAmount, request.getItems());
+        // 9. Database Persistence (Can simulate DATABASE connection timeout exception)
+        boolean dbSuccess = commitOrderTransaction(orderId, finalAmount, request.getItems(), "DATABASE".equalsIgnoreCase(failureType));
+        if (!dbSuccess) {
+            return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
+                    "DatabaseConnectionTimeoutException: PostgreSQL Connection Pool Timeout (504)");
+        }
 
         Order successfulOrder = Order.builder()
                 .orderId(orderId)
@@ -168,9 +173,9 @@ public class OrderService {
             Span.current().setStatus(StatusCode.OK, "HTTP POST to inventory-service (Port 8081) succeeded");
             return true;
         } catch (Exception e) {
-            String errorMsg = "HTTP POST to inventory-service (Port 8081) failed: " + e.getMessage();
             span.error(e);
-            Span.current().setStatus(StatusCode.ERROR, errorMsg);
+            Span.current().recordException(e);
+            Span.current().setStatus(StatusCode.ERROR, "InventoryOutOfStockException: DB Row lock timeout: " + e.getMessage());
             span.tag("error.code", "INVENTORY_ALLOCATION_FAILED_500");
             return false;
         } finally {
@@ -223,9 +228,9 @@ public class OrderService {
             Span.current().setStatus(StatusCode.OK, "HTTP POST to payment-service (Port 8082) succeeded");
             return true;
         } catch (Exception e) {
-            String errorMsg = "HTTP POST to payment-service (Port 8082) failed: Card declined (Code 402)";
             span.error(e);
-            Span.current().setStatus(StatusCode.ERROR, errorMsg);
+            Span.current().recordException(e);
+            Span.current().setStatus(StatusCode.ERROR, "PaymentGatewayDeclinedException: Card declined by issuing bank (Code 402)");
             span.tag("error.code", "PAYMENT_DECLINED_402");
             return false;
         } finally {
@@ -246,9 +251,9 @@ public class OrderService {
             Span.current().setStatus(StatusCode.OK, "HTTP POST to fulfillment-service (Port 8083) succeeded: " + trackingId);
             return trackingId;
         } catch (Exception e) {
-            String errorMsg = "HTTP POST to fulfillment-service (Port 8083) failed: Carrier API timeout (Code 503)";
             span.error(e);
-            Span.current().setStatus(StatusCode.ERROR, errorMsg);
+            Span.current().recordException(e);
+            Span.current().setStatus(StatusCode.ERROR, "CarrierServiceUnavailableException: FedEx API timeout (Code 503)");
             span.tag("error.code", "CARRIER_API_TIMEOUT_503");
             return null;
         } finally {
@@ -270,15 +275,28 @@ public class OrderService {
         }
     }
 
-    private void commitOrderTransaction(String orderId, BigDecimal amount, List<CartItem> items) {
+    private boolean commitOrderTransaction(String orderId, BigDecimal amount, List<CartItem> items, boolean simulateFailure) {
         ScopedSpan span = tracer.startScopedSpan("DatabaseService :: commitOrderTransaction");
         try {
             span.tag("microservice", "database-service");
             span.tag("order.id", orderId);
+
+            if (simulateFailure) {
+                DatabaseConnectionTimeoutException ex = new DatabaseConnectionTimeoutException("PostgreSQL Connection Pool Timeout: Active connections exceeded maximum limit (100/100)");
+                log.error("[database-service] Database transaction commit failed for OrderID: {}! HikariCP Pool Exhausted.", orderId, ex);
+                span.error(ex);
+                Span.current().recordException(ex);
+                Span.current().setStatus(StatusCode.ERROR, ex.getMessage());
+                span.tag("error.code", "DATABASE_TIMEOUT_504");
+                return false;
+            }
+
             log.info("[order-service] Committed ACID transaction for OrderID: {} into PostgreSQL DB", orderId);
             Thread.sleep(50);
             Span.current().setStatus(StatusCode.OK, "DatabaseService: Committed ACID transaction into PostgreSQL DB");
-        } catch (InterruptedException ignored) {
+            return true;
+        } catch (InterruptedException e) {
+            return false;
         } finally {
             span.end();
         }

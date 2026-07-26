@@ -74,7 +74,7 @@ export default function App() {
   const [lastTrace, setLastTrace] = useState(null);
   const [lastOrder, setLastOrder] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [simulationMode, setSimulationMode] = useState('NONE'); // NONE, INVENTORY, PAYMENT, SHIPPING
+  const [simulationMode, setSimulationMode] = useState('NONE'); // NONE, INVENTORY, PAYMENT, SHIPPING, DATABASE
   const [copied, setCopied] = useState(false);
 
   const [shippingAddress, setShippingAddress] = useState({
@@ -413,17 +413,18 @@ export default function App() {
 
                 <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', padding: '1rem', borderRadius: '6px', marginTop: '1rem' }}>
                   <label style={{ display: 'block', fontSize: '0.85rem', color: '#991b1b', fontWeight: 700, marginBottom: '0.4rem' }}>
-                    Simulate Service Failure (OpenObserve Trace & Log Analysis):
+                    Simulate Exception & Failure Mode (OpenObserve Inspection):
                   </label>
                   <select
                     value={simulationMode}
                     onChange={e => setSimulationMode(e.target.value)}
                     style={{ width: '100%', padding: '0.6rem', borderRadius: '4px', border: '1px solid #dc2626', fontSize: '0.9rem', background: '#fff' }}
                   >
-                    <option value="NONE">None (Normal Checkout)</option>
-                    <option value="INVENTORY">InventoryService Failure (Out of Stock / DB Lock Timeout)</option>
-                    <option value="PAYMENT">PaymentGateway Failure (Card Authorization Code 402)</option>
-                    <option value="SHIPPING">FulfillmentService Failure (Carrier API Timeout 503)</option>
+                    <option value="NONE">None (Normal Successful Pipeline)</option>
+                    <option value="INVENTORY">InventoryOutOfStockException (Stock Lock Failure 500)</option>
+                    <option value="PAYMENT">PaymentGatewayDeclinedException (Card Declined 402)</option>
+                    <option value="SHIPPING">CarrierServiceUnavailableException (Carrier Timeout 503)</option>
+                    <option value="DATABASE">DatabaseConnectionTimeoutException (HikariCP Pool Timeout 504)</option>
                   </select>
                 </div>
               </div>
