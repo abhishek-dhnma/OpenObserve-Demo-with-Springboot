@@ -1,0 +1,19 @@
+# Build and dependency directories
+node_modules/
+target/
+dist/
+.mvn/
+mvn.zip
+backend/maven/
+services/*/target/
+
+# IDE & System files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+*.log
+
+# Docker data volume
+openobserve-data/

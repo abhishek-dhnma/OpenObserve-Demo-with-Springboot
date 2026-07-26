@@ -1,0 +1,26 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: amzstore-backend
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: http://localhost:5080/api/default/v1/traces
+      headers:
+        Authorization: "Basic cm9vdEBleGFtcGxlLmNvbTpDb21wbGV4UGFzc3dvcmQxMjM="
+
+openobserve:
+  url: http://localhost:5080
+  auth-header: "Basic cm9vdEBleGFtcGxlLmNvbTpDb21wbGV4UGFzc3dvcmQxMjM="
+  organization: default
+  stream: default

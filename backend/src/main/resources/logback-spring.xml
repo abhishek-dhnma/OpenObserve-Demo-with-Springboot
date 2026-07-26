@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- Console Appender -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} [traceId=%X{traceId:-none} spanId=%X{spanId:-none}] - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- OpenObserve Appender -->
+    <appender name="OPENOBSERVE" class="com.example.amzstore.config.OpenObserveLogbackAppender">
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="OPENOBSERVE"/>
+    </root>
+
+</configuration>
