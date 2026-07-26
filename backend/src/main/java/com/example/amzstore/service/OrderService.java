@@ -159,7 +159,7 @@ public class OrderService {
         try {
             span.tag("peer.service", "inventory-service");
             span.tag("net.peer.name", "inventory-service");
-            span.tag("net.peer.port", 8081);
+            span.tag("net.peer.port", "8081");
             span.tag("http.method", "POST");
             span.tag("order.id", orderId);
 
@@ -225,7 +225,7 @@ public class OrderService {
         try {
             span.tag("peer.service", "payment-service");
             span.tag("net.peer.name", "payment-service");
-            span.tag("net.peer.port", 8082);
+            span.tag("net.peer.port", "8082");
             span.tag("http.method", "POST");
             span.tag("order.id", orderId);
             span.tag("payment.amount", amount.toString());
@@ -253,7 +253,7 @@ public class OrderService {
         try {
             span.tag("peer.service", "fulfillment-service");
             span.tag("net.peer.name", "fulfillment-service");
-            span.tag("net.peer.port", 8083);
+            span.tag("net.peer.port", "8083");
             span.tag("http.method", "POST");
             span.tag("order.id", orderId);
 
