@@ -1,6 +1,6 @@
 # OpenObserve E-Commerce Monitoring Demo with Spring Boot 3 & OpenTelemetry
 
-A full-stack, multi-service e-commerce monitoring demonstration featuring an **Amazon-style React frontend**, a **Spring Boot 3 distributed microservices architecture**, and real-time observability powered by **OpenObserve** (Logs, Distributed Tracing, & Metrics).
+A full-stack, 4-service distributed e-commerce telemetry demonstration featuring an **Amazon-style React frontend**, a **Spring Boot 3 microservices architecture**, and real-time observability powered by **OpenObserve** (Logs, Distributed Traces, and Exception Analysis).
 
 ---
 
@@ -32,15 +32,14 @@ The stack consists of **4 independent Spring Boot microservices**:
 
 ---
 
-## 🚀 Quick Start (One-Click Launch)
+## 🚀 Quick Start (One-Click Launch & Stop)
 
 ### Prerequisites
 - **Docker Desktop** installed and running.
 - **Node.js (v18+)** installed.
 - **Java 17 JDK** installed.
-- *PowerShell* (Windows).
 
-### Running the Stack
+### Launching the Stack
 Run the automated launch script from root:
 
 ```powershell
@@ -50,9 +49,16 @@ Run the automated launch script from root:
 This script automatically:
 1. Stops any stale background Java processes.
 2. Starts OpenObserve via Docker Compose on port `5080`.
-3. Auto-downloads portable Apache Maven if not present in your system PATH.
+3. Auto-downloads portable Apache Maven if not present in system PATH.
 4. Launches all **4 independent Spring Boot microservices** on ports `8080`, `8081`, `8082`, and `8083`.
 5. Starts the **React + Vite Frontend** on port `3000`.
+
+### Stopping the Stack
+To gracefully shut down all microservices, Node servers, and Docker containers:
+
+```powershell
+.\stop-all.ps1
+```
 
 ---
 
@@ -71,22 +77,25 @@ This script automatically:
 
 ## 📊 Telemetry Features in OpenObserve
 
-### 1. Multi-Hop Distributed Tracing
-OpenTelemetry W3C headers (`traceparent`) are automatically injected across all cross-service HTTP REST calls (`8080 → 8081`, `8080 → 8082`, `8080 → 8083`).
+### 1. W3C TraceContext Propagation (`RestTemplateBuilder`)
+Cross-service HTTP REST calls propagate W3C `traceparent` headers using Spring Boot's auto-instrumented `RestTemplateBuilder`.
 In OpenObserve:
-- **Services Tab**: View all 4 distinct microservices (`order-service`, `inventory-service`, `payment-service`, `fulfillment-service`).
-- **Traces Tab**: Inspect color-coded Gantt chart timelines showing parent-child HTTP client/server spans.
-- **Status Codes**: Every span explicitly reports `StatusCode.OK` or `StatusCode.ERROR` with full `status_message` descriptions.
+- **Services Tab**: Displays all 4 distinct microservices (`order-service`, `inventory-service`, `payment-service`, `fulfillment-service`).
+- **Traces Tab**: Renders color-coded Gantt chart waterfalls showing HTTP client/server execution durations across all 4 services.
+- **Service Map**: Visual node dependency graph showing directional arrows connecting microservices.
 
-### 2. Live Log Correlation
+### 2. Exception Recording & Stack Traces
+Real Java custom exceptions are caught and recorded directly onto OpenTelemetry spans (`Span.current().recordException(ex)`) and logged to OpenObserve:
+- `InventoryOutOfStockException` (500)
+- `PaymentGatewayDeclinedException` (402)
+- `CarrierServiceUnavailableException` (503)
+- `DatabaseConnectionTimeoutException` (504)
+
+Selecting any failed span in OpenObserve's **Exceptions** tab displays the full Java Exception Class, Error Message, and Stack Trace.
+
+### 3. Real-Time Correlated Log Ingestion
 - Custom Logback Appender flushes structured log events directly to OpenObserve (`/api/default/default/_json`).
-- In OpenObserve **Logs** tab $\rightarrow$ select stream `default` $\rightarrow$ click **Run Query** to search and filter logs correlated with `trace_id`.
-
-### 3. Failure Simulations
-In the Checkout UI, select any service failure mode to test real-world error monitoring:
-- **Inventory Service Failure**: Simulates DB row lock timeout / out-of-stock exception.
-- **Payment Gateway Failure**: Simulates card authorization decline (HTTP 402).
-- **Fulfillment Service Failure**: Simulates carrier API connection timeout (HTTP 503).
+- Clicking **View Logs** on any trace in OpenObserve executes an instant SQL query matching `trace_id`.
 
 ---
 
