@@ -3,7 +3,7 @@ server:
 
 spring:
   application:
-    name: amzstore-backend
+    name: order-service
 
 management:
   endpoints:
@@ -18,6 +18,9 @@ management:
       endpoint: http://localhost:5080/api/default/v1/traces
       headers:
         Authorization: "Basic cm9vdEBleGFtcGxlLmNvbTpDb21wbGV4UGFzc3dvcmQxMjM="
+  opentelemetry:
+    resource-attributes:
+      service.name: order-service
 
 openobserve:
   url: http://localhost:5080

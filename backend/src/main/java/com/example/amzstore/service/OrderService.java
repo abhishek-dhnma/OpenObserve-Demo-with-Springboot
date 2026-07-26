@@ -121,7 +121,7 @@ public class OrderService {
     private void validateCustomerSession(String email, String orderId) {
         ScopedSpan span = tracer.startScopedSpan("AuthService :: validateCustomerSession");
         try {
-            span.tag("microservice", "auth-service");
+            span.tag("peer.service", "auth-service");
             span.tag("order.id", orderId);
             span.tag("customer.email", email);
             log.info("[order-service] Validating session token for customer: {}", email);
@@ -136,7 +136,7 @@ public class OrderService {
     private BigDecimal fetchCartDetails(List<CartItem> items, String orderId) {
         ScopedSpan span = tracer.startScopedSpan("CartService :: fetchCartDetails");
         try {
-            span.tag("microservice", "cart-service");
+            span.tag("peer.service", "cart-service");
             span.tag("order.id", orderId);
             log.info("[order-service] Fetching item details for {} items", items.size());
             Thread.sleep(60);
@@ -155,12 +155,17 @@ public class OrderService {
     }
 
     private boolean reserveInventoryStock(List<CartItem> items, String orderId, boolean simulateFailure) {
-        ScopedSpan span = tracer.startScopedSpan("Call :: inventory-service (Port 8081)");
+        ScopedSpan span = tracer.startScopedSpan("HTTP POST -> inventory-service");
         try {
-            span.tag("microservice", "inventory-service");
+            span.tag("peer.service", "inventory-service");
+            span.tag("net.peer.name", "inventory-service");
+            span.tag("net.peer.port", 8081);
+            span.tag("http.method", "POST");
             span.tag("order.id", orderId);
 
             String url = inventoryServiceUrl + "/reserve?simulateFailure=" + simulateFailure + "&orderId=" + orderId;
+            span.tag("http.url", url);
+
             restTemplate.postForEntity(url, null, Map.class);
 
             for (CartItem item : items) {
@@ -186,7 +191,7 @@ public class OrderService {
     private BigDecimal calculateTaxesAndDiscounts(BigDecimal subtotal, String orderId) {
         ScopedSpan span = tracer.startScopedSpan("PricingService :: calculateTaxesAndDiscounts");
         try {
-            span.tag("microservice", "pricing-service");
+            span.tag("peer.service", "pricing-service");
             span.tag("order.id", orderId);
             log.info("[order-service] Calculating sales tax (8%) for subtotal: ${}", subtotal);
             Thread.sleep(35);
@@ -203,7 +208,7 @@ public class OrderService {
     private void evaluateFraudRiskScore(String email, BigDecimal amount, String orderId) {
         ScopedSpan span = tracer.startScopedSpan("FraudDetectionService :: evaluateRiskScore");
         try {
-            span.tag("microservice", "fraud-detection-service");
+            span.tag("peer.service", "fraud-detection-service");
             span.tag("order.id", orderId);
             span.tag("risk.score", "0.02 (LOW)");
             log.info("[order-service] ML model evaluated transaction risk for {}: 0.02 (APPROVED)", email);
@@ -216,13 +221,18 @@ public class OrderService {
     }
 
     private boolean authorizePayment(String orderId, BigDecimal amount, boolean simulateFailure) {
-        ScopedSpan span = tracer.startScopedSpan("Call :: payment-service (Port 8082)");
+        ScopedSpan span = tracer.startScopedSpan("HTTP POST -> payment-service");
         try {
-            span.tag("microservice", "payment-service");
+            span.tag("peer.service", "payment-service");
+            span.tag("net.peer.name", "payment-service");
+            span.tag("net.peer.port", 8082);
+            span.tag("http.method", "POST");
             span.tag("order.id", orderId);
             span.tag("payment.amount", amount.toString());
 
             String url = paymentServiceUrl + "/authorize?simulateFailure=" + simulateFailure + "&amount=" + amount + "&orderId=" + orderId;
+            span.tag("http.url", url);
+
             restTemplate.postForEntity(url, null, Map.class);
 
             Span.current().setStatus(StatusCode.OK, "HTTP POST to payment-service (Port 8082) succeeded");
@@ -239,12 +249,17 @@ public class OrderService {
     }
 
     private String createShippingLabel(String orderId, String email, boolean simulateFailure) {
-        ScopedSpan span = tracer.startScopedSpan("Call :: fulfillment-service (Port 8083)");
+        ScopedSpan span = tracer.startScopedSpan("HTTP POST -> fulfillment-service");
         try {
-            span.tag("microservice", "fulfillment-service");
+            span.tag("peer.service", "fulfillment-service");
+            span.tag("net.peer.name", "fulfillment-service");
+            span.tag("net.peer.port", 8083);
+            span.tag("http.method", "POST");
             span.tag("order.id", orderId);
 
             String url = fulfillmentServiceUrl + "/ship?simulateFailure=" + simulateFailure + "&orderId=" + orderId;
+            span.tag("http.url", url);
+
             var response = restTemplate.postForEntity(url, null, Map.class);
 
             String trackingId = response.getBody() != null ? (String) response.getBody().get("trackingId") : "TRK-LOCAL";
@@ -264,7 +279,7 @@ public class OrderService {
     private void sendOrderConfirmationEmail(String email, String orderId, BigDecimal amount) {
         ScopedSpan span = tracer.startScopedSpan("NotificationService :: sendOrderConfirmationEmail");
         try {
-            span.tag("microservice", "notification-service");
+            span.tag("peer.service", "notification-service");
             span.tag("order.id", orderId);
             log.info("[order-service] Sent order confirmation email to: {}", email);
             Thread.sleep(90);
@@ -278,7 +293,7 @@ public class OrderService {
     private boolean commitOrderTransaction(String orderId, BigDecimal amount, List<CartItem> items, boolean simulateFailure) {
         ScopedSpan span = tracer.startScopedSpan("DatabaseService :: commitOrderTransaction");
         try {
-            span.tag("microservice", "database-service");
+            span.tag("peer.service", "postgresql-database");
             span.tag("order.id", orderId);
 
             if (simulateFailure) {
