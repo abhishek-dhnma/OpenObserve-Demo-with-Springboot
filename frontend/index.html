@@ -8,6 +8,29 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- OpenObserve Real User Monitoring (RUM) Web SDK -->
+    <script>
+      (function(window, document, script, url, name) {
+        window[name] = window[name] || function() { (window[name].q = window[name].q || []).push(arguments); };
+        var js = document.createElement(script); js.async = 1; js.src = url;
+        var first = document.getElementsByTagName(script)[0]; first.parentNode.insertBefore(js, first);
+      })(window, document, 'script', 'http://localhost:5080/rum/openobserve-rum.js', 'openobserveRum');
+
+      window.openobserveRum && window.openobserveRum('init', {
+        clientToken: 'Basic cm9vdEBleGFtcGxlLmNvbTpDb21wbGV4UGFzc3dvcmQxMjM=',
+        applicationId: 'amzstore-web-frontend',
+        site: 'http://localhost:5080',
+        service: 'amzstore-frontend',
+        env: 'production',
+        version: '1.0.0',
+        trackViews: true,
+        trackUserInteractions: true,
+        trackResources: true,
+        trackLongTasks: true,
+        defaultPrivacyLevel: 'allow'
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>

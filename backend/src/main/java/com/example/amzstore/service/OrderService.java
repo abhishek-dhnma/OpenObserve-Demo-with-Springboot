@@ -46,6 +46,11 @@ public class OrderService {
             String customerEmail = request.getCustomerEmail() != null ? request.getCustomerEmail() : "customer@example.com";
             String failureType = request.getPaymentMethod() != null && request.isSimulateFailure() ? request.getPaymentMethod() : "NONE";
 
+            Span.current().setAttribute("order.id", orderId);
+            Span.current().setAttribute("customer.email", customerEmail);
+            Span.current().setAttribute("checkout.failure_type", failureType);
+            Span.current().addEvent("Checkout pipeline initiated");
+
             log.info("[order-service] Initiating order checkout pipeline [OrderID: {}, Customer: {}, FailureType: {}]",
                     orderId, customerEmail, failureType);
 
@@ -59,6 +64,7 @@ public class OrderService {
             boolean inventorySuccess = reserveInventoryStock(request.getItems(), orderId, "INVENTORY".equalsIgnoreCase(failureType));
             if (!inventorySuccess) {
                 failedOrdersCounter.increment();
+                Span.current().addEvent("Pipeline halted: Inventory allocation error");
                 return createFailedOrder(orderId, customerEmail, request.getItems(), subtotal, mainTraceId,
                         "InventoryOutOfStockException: Stock allocation lock failed / DB Row lock timeout (500)");
             }
@@ -73,6 +79,7 @@ public class OrderService {
             boolean paymentSuccess = authorizePayment(orderId, finalAmount, "PAYMENT".equalsIgnoreCase(failureType) || request.isSimulateFailure());
             if (!paymentSuccess) {
                 failedOrdersCounter.increment();
+                Span.current().addEvent("Pipeline halted: Payment card decline");
                 return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
                         "PaymentGatewayDeclinedException: Card authorization declined by issuing bank (Code 402)");
             }
@@ -81,6 +88,7 @@ public class OrderService {
             String trackingId = createShippingLabel(orderId, customerEmail, "SHIPPING".equalsIgnoreCase(failureType));
             if (trackingId == null) {
                 failedOrdersCounter.increment();
+                Span.current().addEvent("Pipeline halted: Logistics carrier API timeout");
                 return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
                         "CarrierServiceUnavailableException: Carrier API address validation timeout (FedEx 503)");
             }
@@ -92,11 +100,13 @@ public class OrderService {
             boolean dbSuccess = commitOrderTransaction(orderId, finalAmount, request.getItems(), "DATABASE".equalsIgnoreCase(failureType));
             if (!dbSuccess) {
                 failedOrdersCounter.increment();
+                Span.current().addEvent("Pipeline halted: Database pool connection timeout");
                 return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
                         "DatabaseConnectionTimeoutException: PostgreSQL Connection Pool Timeout (504)");
             }
 
             successfulOrdersCounter.increment();
+            Span.current().addEvent("Checkout pipeline completed successfully");
 
             Order successfulOrder = Order.builder()
                     .orderId(orderId)
@@ -138,6 +148,7 @@ public class OrderService {
             span.tag("peer.service", "auth-service");
             span.tag("order.id", orderId);
             span.tag("customer.email", email);
+            Span.current().addEvent("Verifying OAuth2 JWT session token");
             log.info("[order-service] Validating session token for customer: {}", email);
             Thread.sleep(45);
             Span.current().setStatus(StatusCode.OK, "AuthService: Customer session token validated successfully");
@@ -152,6 +163,8 @@ public class OrderService {
         try {
             span.tag("peer.service", "cart-service");
             span.tag("order.id", orderId);
+            span.tag("cart.item_count", String.valueOf(items.size()));
+            Span.current().addEvent("Calculating cart item quantities and unit prices");
             log.info("[order-service] Fetching item details for {} items", items.size());
             Thread.sleep(60);
 
@@ -180,6 +193,7 @@ public class OrderService {
             String url = inventoryServiceUrl + "/reserve?simulateFailure=" + simulateFailure + "&orderId=" + orderId;
             span.tag("http.url", url);
 
+            Span.current().addEvent("Sending HTTP POST reservation to inventory-service (Port 8081)");
             restTemplate.postForEntity(url, null, Map.class);
 
             for (CartItem item : items) {
@@ -207,6 +221,8 @@ public class OrderService {
         try {
             span.tag("peer.service", "pricing-service");
             span.tag("order.id", orderId);
+            span.tag("pricing.tax_rate", "8.0%");
+            Span.current().addEvent("Applying regional sales tax and item coupon discounts");
             log.info("[order-service] Calculating sales tax (8%) for subtotal: ${}", subtotal);
             Thread.sleep(35);
             BigDecimal total = subtotal.multiply(new BigDecimal("1.08")).setScale(2, RoundingMode.HALF_UP);
@@ -225,6 +241,7 @@ public class OrderService {
             span.tag("peer.service", "fraud-detection-service");
             span.tag("order.id", orderId);
             span.tag("risk.score", "0.02 (LOW)");
+            Span.current().addEvent("Executing ML Risk Scoring Model v2.4");
             log.info("[order-service] ML model evaluated transaction risk for {}: 0.02 (APPROVED)", email);
             Thread.sleep(80);
             Span.current().setStatus(StatusCode.OK, "FraudDetectionService: Transaction risk score 0.02 (Low / Approved)");
@@ -243,10 +260,12 @@ public class OrderService {
             span.tag("http.method", "POST");
             span.tag("order.id", orderId);
             span.tag("payment.amount", amount.toString());
+            span.tag("payment.gateway", "Stripe API v3");
 
             String url = paymentServiceUrl + "/authorize?simulateFailure=" + simulateFailure + "&amount=" + amount + "&orderId=" + orderId;
             span.tag("http.url", url);
 
+            Span.current().addEvent("Sending HTTP POST authorization to payment-service (Port 8082)");
             restTemplate.postForEntity(url, null, Map.class);
 
             Span.current().setStatus(StatusCode.OK, "HTTP POST to payment-service (Port 8082) succeeded");
@@ -270,10 +289,12 @@ public class OrderService {
             span.tag("net.peer.port", "8083");
             span.tag("http.method", "POST");
             span.tag("order.id", orderId);
+            span.tag("logistics.carrier", "FedEx Express");
 
             String url = fulfillmentServiceUrl + "/ship?simulateFailure=" + simulateFailure + "&orderId=" + orderId;
             span.tag("http.url", url);
 
+            Span.current().addEvent("Sending HTTP POST shipping label creation to fulfillment-service (Port 8083)");
             var response = restTemplate.postForEntity(url, null, Map.class);
 
             String trackingId = response.getBody() != null ? (String) response.getBody().get("trackingId") : "TRK-LOCAL";
@@ -295,6 +316,8 @@ public class OrderService {
         try {
             span.tag("peer.service", "notification-service");
             span.tag("order.id", orderId);
+            span.tag("notification.type", "EMAIL");
+            Span.current().addEvent("Dispatching email notification via SendGrid SMTP");
             log.info("[order-service] Sent order confirmation email to: {}", email);
             Thread.sleep(90);
             Span.current().setStatus(StatusCode.OK, "NotificationService: Sent order confirmation email to " + email);
@@ -309,6 +332,8 @@ public class OrderService {
         try {
             span.tag("peer.service", "postgresql-database");
             span.tag("order.id", orderId);
+            span.tag("db.type", "postgresql");
+            span.tag("db.statement", "INSERT INTO orders VALUES (?, ?, ?)");
 
             if (simulateFailure) {
                 DatabaseConnectionTimeoutException ex = new DatabaseConnectionTimeoutException("PostgreSQL Connection Pool Timeout: Active connections exceeded maximum limit (100/100)");
@@ -320,6 +345,7 @@ public class OrderService {
                 return false;
             }
 
+            Span.current().addEvent("Committing ACID transaction in PostgreSQL cluster");
             log.info("[order-service] Committed ACID transaction for OrderID: {} into PostgreSQL DB", orderId);
             Thread.sleep(50);
             Span.current().setStatus(StatusCode.OK, "DatabaseService: Committed ACID transaction into PostgreSQL DB");

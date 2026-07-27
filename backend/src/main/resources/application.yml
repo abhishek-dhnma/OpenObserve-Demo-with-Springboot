@@ -21,6 +21,9 @@ management:
   opentelemetry:
     resource-attributes:
       service.name: order-service
+      service.namespace: ecommerce
+      deployment.environment: production
+      service.version: 1.0.0
 
 openobserve:
   url: http://localhost:5080
