@@ -4,6 +4,8 @@ import com.example.amzstore.dto.CheckoutRequest;
 import com.example.amzstore.exception.DatabaseConnectionTimeoutException;
 import com.example.amzstore.model.CartItem;
 import com.example.amzstore.model.Order;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.tracing.ScopedSpan;
 import io.micrometer.tracing.Tracer;
 import io.opentelemetry.api.trace.Span;
@@ -27,6 +29,10 @@ public class OrderService {
     private final ProductService productService;
     private final Tracer tracer;
     private final RestTemplate restTemplate;
+    private final Counter successfulOrdersCounter;
+    private final Counter failedOrdersCounter;
+    private final Timer checkoutTimer;
+
     private final Map<String, Order> orderRepository = new ConcurrentHashMap<>();
 
     private final String inventoryServiceUrl = "http://localhost:8081/api/inventory";
@@ -34,72 +40,80 @@ public class OrderService {
     private final String fulfillmentServiceUrl = "http://localhost:8083/api/fulfillment";
 
     public Order processCheckout(CheckoutRequest request) {
-        String mainTraceId = tracer.currentSpan() != null ? tracer.currentSpan().context().traceId() : UUID.randomUUID().toString();
-        String orderId = "ORD-" + System.currentTimeMillis();
-        String customerEmail = request.getCustomerEmail() != null ? request.getCustomerEmail() : "customer@example.com";
-        String failureType = request.getPaymentMethod() != null && request.isSimulateFailure() ? request.getPaymentMethod() : "NONE";
+        return checkoutTimer.record(() -> {
+            String mainTraceId = tracer.currentSpan() != null ? tracer.currentSpan().context().traceId() : UUID.randomUUID().toString();
+            String orderId = "ORD-" + System.currentTimeMillis();
+            String customerEmail = request.getCustomerEmail() != null ? request.getCustomerEmail() : "customer@example.com";
+            String failureType = request.getPaymentMethod() != null && request.isSimulateFailure() ? request.getPaymentMethod() : "NONE";
 
-        log.info("[order-service] Initiating order checkout pipeline [OrderID: {}, Customer: {}, FailureType: {}]",
-                orderId, customerEmail, failureType);
+            log.info("[order-service] Initiating order checkout pipeline [OrderID: {}, Customer: {}, FailureType: {}]",
+                    orderId, customerEmail, failureType);
 
-        // 1. AuthService (Internal Session Validation)
-        validateCustomerSession(customerEmail, orderId);
+            // 1. AuthService (Internal Session Validation)
+            validateCustomerSession(customerEmail, orderId);
 
-        // 2. CartService (Cart Calculation)
-        BigDecimal subtotal = fetchCartDetails(request.getItems(), orderId);
+            // 2. CartService (Cart Calculation)
+            BigDecimal subtotal = fetchCartDetails(request.getItems(), orderId);
 
-        // 3. HTTP Call to standalone inventory-service (Port 8081)
-        boolean inventorySuccess = reserveInventoryStock(request.getItems(), orderId, "INVENTORY".equalsIgnoreCase(failureType));
-        if (!inventorySuccess) {
-            return createFailedOrder(orderId, customerEmail, request.getItems(), subtotal, mainTraceId,
-                    "InventoryOutOfStockException: Stock allocation lock failed / DB Row lock timeout (500)");
-        }
+            // 3. HTTP Call to standalone inventory-service (Port 8081)
+            boolean inventorySuccess = reserveInventoryStock(request.getItems(), orderId, "INVENTORY".equalsIgnoreCase(failureType));
+            if (!inventorySuccess) {
+                failedOrdersCounter.increment();
+                return createFailedOrder(orderId, customerEmail, request.getItems(), subtotal, mainTraceId,
+                        "InventoryOutOfStockException: Stock allocation lock failed / DB Row lock timeout (500)");
+            }
 
-        // 4. PricingService
-        BigDecimal finalAmount = calculateTaxesAndDiscounts(subtotal, orderId);
+            // 4. PricingService
+            BigDecimal finalAmount = calculateTaxesAndDiscounts(subtotal, orderId);
 
-        // 5. FraudDetectionService
-        evaluateFraudRiskScore(customerEmail, finalAmount, orderId);
+            // 5. FraudDetectionService
+            evaluateFraudRiskScore(customerEmail, finalAmount, orderId);
 
-        // 6. HTTP Call to standalone payment-service (Port 8082)
-        boolean paymentSuccess = authorizePayment(orderId, finalAmount, "PAYMENT".equalsIgnoreCase(failureType) || request.isSimulateFailure());
-        if (!paymentSuccess) {
-            return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
-                    "PaymentGatewayDeclinedException: Card authorization declined by issuing bank (Code 402)");
-        }
+            // 6. HTTP Call to standalone payment-service (Port 8082)
+            boolean paymentSuccess = authorizePayment(orderId, finalAmount, "PAYMENT".equalsIgnoreCase(failureType) || request.isSimulateFailure());
+            if (!paymentSuccess) {
+                failedOrdersCounter.increment();
+                return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
+                        "PaymentGatewayDeclinedException: Card authorization declined by issuing bank (Code 402)");
+            }
 
-        // 7. HTTP Call to standalone fulfillment-service (Port 8083)
-        String trackingId = createShippingLabel(orderId, customerEmail, "SHIPPING".equalsIgnoreCase(failureType));
-        if (trackingId == null) {
-            return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
-                    "CarrierServiceUnavailableException: Carrier API address validation timeout (FedEx 503)");
-        }
+            // 7. HTTP Call to standalone fulfillment-service (Port 8083)
+            String trackingId = createShippingLabel(orderId, customerEmail, "SHIPPING".equalsIgnoreCase(failureType));
+            if (trackingId == null) {
+                failedOrdersCounter.increment();
+                return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
+                        "CarrierServiceUnavailableException: Carrier API address validation timeout (FedEx 503)");
+            }
 
-        // 8. NotificationService
-        sendOrderConfirmationEmail(customerEmail, orderId, finalAmount);
+            // 8. NotificationService
+            sendOrderConfirmationEmail(customerEmail, orderId, finalAmount);
 
-        // 9. Database Persistence (Can simulate DATABASE connection timeout exception)
-        boolean dbSuccess = commitOrderTransaction(orderId, finalAmount, request.getItems(), "DATABASE".equalsIgnoreCase(failureType));
-        if (!dbSuccess) {
-            return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
-                    "DatabaseConnectionTimeoutException: PostgreSQL Connection Pool Timeout (504)");
-        }
+            // 9. Database Persistence (Can simulate DATABASE connection timeout exception)
+            boolean dbSuccess = commitOrderTransaction(orderId, finalAmount, request.getItems(), "DATABASE".equalsIgnoreCase(failureType));
+            if (!dbSuccess) {
+                failedOrdersCounter.increment();
+                return createFailedOrder(orderId, customerEmail, request.getItems(), finalAmount, mainTraceId,
+                        "DatabaseConnectionTimeoutException: PostgreSQL Connection Pool Timeout (504)");
+            }
 
-        Order successfulOrder = Order.builder()
-                .orderId(orderId)
-                .customerEmail(customerEmail)
-                .items(request.getItems())
-                .totalAmount(finalAmount)
-                .status("PAID")
-                .traceId(mainTraceId)
-                .createdAt(LocalDateTime.now())
-                .build();
+            successfulOrdersCounter.increment();
 
-        orderRepository.put(orderId, successfulOrder);
-        log.info("[order-service] Order pipeline completed! OrderID: {}, Total: ${}, TrackingID: {}, TraceID: {}",
-                orderId, finalAmount, trackingId, mainTraceId);
+            Order successfulOrder = Order.builder()
+                    .orderId(orderId)
+                    .customerEmail(customerEmail)
+                    .items(request.getItems())
+                    .totalAmount(finalAmount)
+                    .status("PAID")
+                    .traceId(mainTraceId)
+                    .createdAt(LocalDateTime.now())
+                    .build();
 
-        return successfulOrder;
+            orderRepository.put(orderId, successfulOrder);
+            log.info("[order-service] Order pipeline completed! OrderID: {}, Total: ${}, TrackingID: {}, TraceID: {}",
+                    orderId, finalAmount, trackingId, mainTraceId);
+
+            return successfulOrder;
+        });
     }
 
     private Order createFailedOrder(String orderId, String email, List<CartItem> items, BigDecimal amount, String traceId, String reason) {
